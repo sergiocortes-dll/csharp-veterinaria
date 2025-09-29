@@ -1,40 +1,34 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using MySqlConnector;
-using Pomelo.EntityFrameworkCore.MySql;
+using veterinaria;
 using veterinaria.Data;
 using veterinaria.Services;
+using veterinaria.UI;
 
-class Program
+public class Program
 {
-    static async Task Main(string[] args)
+    public static async Task Main(string[] args)
     {
-        try
-        {
-            IConfiguration configuration = new ConfigurationBuilder()
-                .SetBasePath(Directory.GetCurrentDirectory())
-                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-                .Build();
+        var builder = Host.CreateDefaultBuilder(args);
 
+        builder.ConfigureServices((hostContext, services) =>
+        {
+            var configuration = hostContext.Configuration;
             var connectionString = configuration.GetConnectionString("DefaultConnection");
+
             if (string.IsNullOrEmpty(connectionString))
             {
-                Console.WriteLine("ERROR: Connection string 'DefaultConnection' not found in appsettings.json");
-                return;
+                // Use temporal ServiceProvider to log the error
+                using var tempProvider = services.BuildServiceProvider();
+                var logger = tempProvider.GetService<ILogger<Program>>();
+                logger?.LogError("ERROR: Connection string 'DefaultConnection' is missing");
+                Environment.Exit(1);
             }
 
-            var safeConnectionString = connectionString
-                .Replace("Pwd=", "Pwd=***")
-                .Replace("Password=", "Password=***");
-            Console.WriteLine($"Using connection string: {safeConnectionString}");
-
-            var services = new ServiceCollection();
-
-            services.AddLogging(builder => builder.AddConsole().SetMinimumLevel(LogLevel.Information));
-            services.AddSingleton(configuration);
-
+            // ---- DbContext con MySQL (Pomelo) ----
             services.AddDbContext<AppDbContext>(options =>
                 options.UseMySql(
                     connectionString,
@@ -47,75 +41,38 @@ class Program
                             errorNumbersToAdd: null);
                         mySqlOptions.CommandTimeout(60);
                     })
-                .EnableSensitiveDataLogging()
+                .EnableSensitiveDataLogging(hostContext.HostingEnvironment.IsDevelopment())
                 .EnableDetailedErrors());
 
+            // ---- Services ----
             services.AddScoped<ClientService>();
+            services.AddScoped<PetService>();
+            services.AddScoped<VetService>();
+            services.AddScoped<AppointmentService>();
 
-            var serviceProvider = services.BuildServiceProvider();
+            // ---- UI ----
+            services.AddTransient<Menu>();
 
-            await TestDatabaseOperations(serviceProvider);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Application failed to start: {ex.Message}");
-            Console.WriteLine($"Stack trace: {ex.StackTrace}");
-        }
-    }
+            // ---- AppRunner ----
+            services.AddTransient<AppRunner>();
+        });
 
-    static async Task TestDatabaseOperations(IServiceProvider serviceProvider)
-    {
-        using var scope = serviceProvider.CreateScope();
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        var host = builder.Build();
+
+        using var scope = host.Services.CreateScope();
+        var services = scope.ServiceProvider;
+        var logger = services.GetRequiredService<ILogger<Program>>();
 
         try
         {
-            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-            logger.LogInformation("Testing database connection...");
-
-            var canConnect = await context.Database.CanConnectAsync();
-            if (!canConnect)
-            {
-                logger.LogError("Cannot connect to database - CanConnectAsync returned false");
-                return;
-            }
-
-            logger.LogInformation("Database connection successful!");
-
-            await context.Database.EnsureCreatedAsync();
-            logger.LogInformation("Database schema verified/created");
-
-            var clientService = scope.ServiceProvider.GetRequiredService<ClientService>();
-
-            logger.LogInformation("Retrieving clients...");
-            var clients = clientService.GetClients();
-
-            if (!clients.Any())
-            {
-                logger.LogInformation("No clients found in database");
-            }
-            else
-            {
-                foreach (var client in clients)
-                {
-                    Console.WriteLine($"Cliente: {client.Name}");
-                }
-            }
-        }
-        catch (MySqlException mysqlEx)
-        {
-            Console.WriteLine($"MySQL Error: {mysqlEx.Message}");
-            Console.WriteLine($"Error Number: {mysqlEx.Number}");
-            Console.WriteLine($"SQL State: {mysqlEx.SqlState}");
+            logger.LogInformation("Iniciando la aplicación...");
+            var runner = services.GetRequiredService<AppRunner>();
+            await runner.RunAsync();
+            logger.LogInformation("La aplicación finalizó correctamente.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
-            if (ex.InnerException != null)
-            {
-                Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-            }
+            logger.LogCritical(ex, "Ocurrió un error fatal en la aplicación.");
         }
     }
 }
