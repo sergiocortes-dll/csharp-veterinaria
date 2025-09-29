@@ -6,12 +6,8 @@
 
 ```bash
 dotnet add package Microsoft.EntityFrameworkCore
-dotnet add Microsoft.EntityFrameworkCore.Design
-dotnet add Microsoft.Extensions.Configuration
-dotnet add Pomelo.EntityFrameworkCore.MySql
-dotnet add package Microsoft.Extensions.Configuration
-dotnet add package Microsoft.Extensions.Configuration.FileExtensions
-dotnet add package Microsoft.Extensions.Configuration.Json
+dotnet add package Microsoft.EntityFrameworkCore.Design
+dotnet add package Pomelo.EntityFrameworkCore.MySql
 ```
 
 ### Como hacer una migración
